@@ -1,0 +1,218 @@
+import io
+import streamlit as st
+import base64
+import numpy as np
+import cv2 as cv
+import pandas as pd
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.output_parsers import JsonOutputParser, CommaSeparatedListOutputParser
+from langchain_core.messages import HumanMessage
+import os
+
+# Set page config at the very beginning
+st.set_page_config(page_title="P&G Image Processor", layout="wide")
+
+# Define P&G theme colors
+PG_BLUE = "#0046BE"
+PG_WHITE = "#FFFFFF"
+
+# Custom CSS to style the app
+st.markdown(f"""
+<style>
+    .reportview-container .main .block-container{{
+        max-width: 1000px;
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        padding-left: 5rem;
+        padding-right: 5rem;
+    }}
+    .stApp {{
+        background-color: {PG_WHITE};
+    }}
+    .stButton>button {{
+        color: {PG_WHITE};
+        background-color: {PG_BLUE};
+        border-radius: 20px;
+    }}
+    .stButton>button:hover {{
+        background-color: {PG_BLUE};
+        opacity: 0.8;
+    }}
+    h1, h2, h3 {{
+        color: {PG_BLUE};
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+def convert_to_base64(image_path):
+    """Convert an image file to a Base64 encoded string."""
+    try:
+        with open(image_path, "rb") as image_file:
+            base64_encoded_image = base64.b64encode(image_file.read())
+            base64_string = base64_encoded_image.decode("utf-8")
+            return base64_string
+    except FileNotFoundError:
+        print(f"File not found: {image_path}")
+        return None
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+GOOGLE_API_KEY = "AIzaSyBmNZBBATXQff6-21ZZBne6tomVMskhp_E"
+
+model_1_5_pro = ChatGoogleGenerativeAI(
+    model="gemini-1.5-flash",
+    temperature=0.01,
+    google_api_key=GOOGLE_API_KEY,
+)
+
+def process_image(image_path):
+    content = []
+    image_data = convert_to_base64(image_path)
+    
+    gray_image = cv.imread(image_path, 0)
+    thresh1 = cv.adaptiveThreshold(gray_image, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 11, 2)
+    thresh2 = cv.adaptiveThreshold(gray_image, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 31, 3)
+    thresh3 = cv.adaptiveThreshold(gray_image, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 13, 5)
+    thresh4 = cv.adaptiveThreshold(gray_image, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 4)
+    final = np.concatenate((thresh1, thresh2, thresh3, thresh4), axis=1)
+
+    ret, thresh1 = cv.threshold(gray_image, 0, 255, cv.THRESH_BINARY+cv.THRESH_OTSU)
+    final1 = np.concatenate((thresh1, thresh2), axis=1)
+    
+    content.append(
+        {
+            "type": "text",
+            "text": "Extract product information from the provided image for building the P&G catalog for the attributes available in the image only.",
+        }
+    )
+    
+    content.append(
+        {
+            "type": "text",  
+            "text": """Instructions:
+- Analyze the image: Identify the product and its key attributes based on the visible information.
+- Consider multilingual text: If the text is in multiple languages, extract the information value in the original language as in the image, and do not translate to English extract attributes in original language.
+- Handle image clarity: If the original image lacks clarity to extract text, refer the preprocessed (grey scaled, adaptive threshold applied, inverted) versions to extract additional/missing information to complete the details.
+- Avoid redundancy: Focus on completing missing attributes from one image using information from others images with original text. Remove duplicates in the attributes.
+- Generate final values: Create a comprehensive product record with all extracted attributes. No two keys should have same values.""",
+        }
+    )
+    content.append(
+        {
+            "type": "text",
+            "text": "Original Image:"
+        }
+    )
+    content.append(
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
+        }
+    )
+    content.append(
+        {
+            "type": "text",
+            "text": "Preprocessed Images:"
+        }
+    )
+    for img_1 in [gray_image, final, final1]:
+        imstring = base64.b64encode(cv.imencode('.jpg', img_1)[1]).decode()
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{imstring}"},
+            }
+        )
+    
+    content.append(
+        {
+            "type": "text",
+            "text": "Convert Final response to JSON format",
+        }
+    )
+    
+    message = HumanMessage(content=content)
+    
+    try:
+        chain = model_1_5_pro | JsonOutputParser()
+        response = chain.invoke([message])
+    except:
+        try:
+            chain = model_1_5_pro | JsonOutputParser()
+            response = chain.invoke([message])
+        except:
+            chain = model_1_5_pro | CommaSeparatedListOutputParser()
+            response = chain.invoke([message])
+    
+    return response
+
+def generate_grayscale_images(image_path):
+    """Generate grayscale images with different contrasts."""
+    original = cv.imread(image_path)
+    gray = cv.cvtColor(original, cv.COLOR_BGR2GRAY)
+    
+    # Generate images with different contrasts
+    contrast_images = []
+    for alpha in [0.5, 1.0, 1.5, 2.0]:  # Different contrast levels
+        adjusted = cv.convertScaleAbs(gray, alpha=alpha, beta=0)
+        contrast_images.append(adjusted)
+    
+    return gray, contrast_images
+
+# Streamlit UI
+# Add P&G logo
+st.image("https://i.imgur.com/TvWI55d.png", width=100)
+
+st.title("P&G Image Processor")
+st.write("Upload an image to extract product information for the P&G catalog.")
+
+uploaded_file = st.file_uploader("Choose an image file", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    # Save the uploaded file temporarily
+    with open("temp_image.jpg", "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    
+    st.image(uploaded_file, caption="Uploaded Image", use_column_width=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Process Image"):
+            with st.spinner("Processing image..."):
+                result = process_image("temp_image.jpg")
+            
+            st.success("Image processed successfully!")
+            st.json(result)
+            
+            # Convert result to DataFrame
+            df = pd.DataFrame([result])
+            
+            # Create a download button for Excel file
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name="Sheet1")
+            excel_data = output.getvalue()
+            b64 = base64.b64encode(excel_data).decode()
+            href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="P&G_results.xlsx">Download Excel File</a>'
+            st.markdown(href, unsafe_allow_html=True)
+
+    with col2:
+        if st.button("Generate Grayscale Images"):
+            with st.spinner("Generating grayscale images..."):
+                gray, contrast_images = generate_grayscale_images("temp_image.jpg")
+            
+            st.success("Grayscale images generated successfully!")
+            
+            # Display the grayscale images
+            st.image(gray, caption="Original Grayscale", use_column_width=True)
+            for i, img in enumerate(contrast_images):
+                st.image(img, caption=f"Contrast Level {i+1}", use_column_width=True)
+
+    # Clean up the temporary file
+    os.remove("temp_image.jpg")
+
+st.sidebar.image("https://i.imgur.com/TvWI55d.png", width=100)
+st.sidebar.title("About")
+st.sidebar.info("This application processes images to extract product information for the P&G catalog. Upload an image, click 'Process Image', and view the results. You can also download the results in Excel format. Additionally, you can generate grayscale images with different contrasts.")
