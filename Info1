@@ -1,3 +1,13 @@
+StreamlitSetPageConfigMustBeFirstCommandError: set_page_config() can only be called once per app page, and must be called as the first Streamlit command in your script.
+
+For more information refer to the docs.
+
+Traceback:
+File "C:\Users\raju.gopi\Documents\Gen AI\Image_Processing\app1.py", line 161, in <module>
+    st.set_page_config(page_title="P&G Image Processor", layout="wide")
+
+
+
 import io
 import streamlit as st
 import base64
