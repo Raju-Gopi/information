@@ -1,0 +1,130 @@
+import io
+import streamlit as st
+import base64
+import numpy as np
+import cv2 as cv
+import pandas as pd
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.output_parsers import JsonOutputParser, CommaSeparatedListOutputParser
+from langchain_core.messages import HumanMessage
+import os
+
+# Set page config at the very beginning
+st.set_page_config(page_title="P&G Image Processor", layout="wide")
+
+# Define P&G theme colors
+PG_BLUE = "#0046BE"
+PG_WHITE = "#FFFFFF"
+
+# Custom CSS to style the app
+st.markdown(f"""
+<style>
+    .reportview-container .main .block-container{{
+        max-width: 1000px;
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        padding-left: 5rem;
+        padding-right: 5rem;
+    }}
+    .stApp {{
+        background-color: {PG_WHITE};
+    }}
+    .stButton>button {{
+        color: {PG_WHITE};
+        background-color: {PG_BLUE};
+        border-radius: 20px;
+    }}
+    .stButton>button:hover {{
+        background-color: {PG_BLUE};
+        opacity: 0.8;
+    }}
+    h1, h2, h3 {{
+        color: {PG_BLUE};
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+def convert_to_base64(image_path):
+    """Convert an image file to a Base64 encoded string."""
+    try:
+        with open(image_path, "rb") as image_file:
+            base64_encoded_image = base64.b64encode(image_file.read())
+            base64_string = base64_encoded_image.decode("utf-8")
+            return base64_string
+    except FileNotFoundError:
+        print(f"File not found: {image_path}")
+        return None
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+GOOGLE_API_KEY = "AIzaSyBmNZBBATXQff6-21ZZBne6tomVMskhp_E"
+
+model_1_5_pro = ChatGoogleGenerativeAI(
+    model="gemini-1.5-flash",
+    temperature=0.01,
+    google_api_key=GOOGLE_API_KEY,
+)
+
+def process_image(image_path):
+    # ... (rest of the function remains the same)
+
+def generate_grayscale_images(image_path):
+    # ... (rest of the function remains the same)
+
+# Streamlit UI
+# Add P&G logo
+st.image("https://i.imgur.com/TvWI55d.png", width=100)
+
+st.title("P&G Image Processor")
+st.write("Upload an image to extract product information for the P&G catalog.")
+
+uploaded_file = st.file_uploader("Choose an image file", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    # Save the uploaded file temporarily
+    with open("temp_image.jpg", "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    
+    st.image(uploaded_file, caption="Uploaded Image", use_column_width=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Process Image"):
+            with st.spinner("Processing image..."):
+                result = process_image("temp_image.jpg")
+            
+            st.success("Image processed successfully!")
+            st.json(result)
+            
+            # Convert result to DataFrame
+            df = pd.DataFrame([result])
+            
+            # Create a download button for Excel file
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name="Sheet1")
+            excel_data = output.getvalue()
+            b64 = base64.b64encode(excel_data).decode()
+            href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="P&G_results.xlsx">Download Excel File</a>'
+            st.markdown(href, unsafe_allow_html=True)
+
+    with col2:
+        if st.button("Generate Grayscale Images"):
+            with st.spinner("Generating grayscale images..."):
+                gray, contrast_images = generate_grayscale_images("temp_image.jpg")
+            
+            st.success("Grayscale images generated successfully!")
+            
+            # Display the grayscale images
+            st.image(gray, caption="Original Grayscale", use_column_width=True)
+            for i, img in enumerate(contrast_images):
+                st.image(img, caption=f"Contrast Level {i+1}", use_column_width=True)
+
+    # Clean up the temporary file
+    os.remove("temp_image.jpg")
+
+st.sidebar.image("https://i.imgur.com/TvWI55d.png", width=100)
+st.sidebar.title("About")
+st.sidebar.info("This application processes images to extract product information for the P&G catalog. Upload an image, click 'Process Image', and view the results. You can also download the results in Excel format. Additionally, you can generate grayscale images with different contrasts.")
